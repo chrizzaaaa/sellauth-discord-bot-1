@@ -1,13 +1,13 @@
 import { EmbedBuilder, SlashCommandBuilder } from 'discord.js';
 
-// Color emoji mapping
+// emoji for status colors
 const COLOR_EMOJIS = {
-  '#e74c3c': '🔴', // Red
-  '#e67e22': '🟠', // Orange
-  '#f1c40f': '🟡', // Yellow
-  '#2ecc71': '🟢', // Green
-  '#3498db': '🔵', // Blue
-  'null': '⚪'     // Default/null
+  '#e74c3c': '🔴',
+  '#e67e22': '🟠',
+  '#f1c40f': '🟡',
+  '#2ecc71': '🟢',
+  '#3498db': '🔵',
+  'null': '⚪'
 };
 
 export default {
@@ -38,56 +38,36 @@ export default {
   onlyWhitelisted: true,
 
   async execute(interaction, api) {
+    const productId = interaction.options.getString('id');
+    const statusText = interaction.options.getString('text');
+    const statusColor = interaction.options.getString('color');
+    
     try {
-      const productId = interaction.options.getString('id');
-      const statusText = interaction.options.getString('text');
-      const statusColor = interaction.options.getString('color');
-      
-      // Convert 'null' string to actual null value
-      const finalStatusColor = statusColor === 'null' ? null : statusColor;
-
       // Get current product data
       const product = await api.get(`shops/${api.shopId}/products/${productId}`);
 
-      // Prepare the update payload with all required fields
+      // Create the update payload with all required fields
       const updatePayload = {
-        id: parseInt(productId),
-        name: product.name,
-        path: product.path,
-        description: product.description,
-        price: product.price,
-        currency: product.currency,
-        payment_methods: product.payment_methods || [],
-        deliverables: product.deliverables,
-        deliverables_type: product.deliverables_type,
-        stock: product.stock || 0,
-        type: product.type || 'single',
+        ...product,
         status_text: statusText,
-        status_color: finalStatusColor,
-        price_slash: product.price_slash || null,
-        image_url: product.image_url || null,
-        group_id: product.group_id || null,
+        status_color: statusColor === 'null' ? null : statusColor,
+        badge_color: product.badge_color || null,
+        badge_text: product.badge_text || null,
+        stock_count: product.stock_count || 0,
+        images: product.images || [],
+        cloudflare_image_id: product.cloudflare_image_id || null,
+        group_sort_priority: product.group_sort_priority || 0,
+        id: parseInt(productId),
         shop_id: parseInt(api.shopId),
-        instructions: product.instructions || '',
-        out_of_stock_message: product.out_of_stock_message || '',
-        sort_priority: product.sort_priority || 0,
-        visibility: product.visibility || 'public',
-        quantity_min: product.quantity_min || null,
-        quantity_max: product.quantity_max || null,
-        discord_required: product.discord_required || 0,
-        discord_guild_id: product.discord_guild_id || null,
-        discord_role_id: product.discord_role_id || null,
-        block_vpn: product.block_vpn || 0,
         custom_fields: product.custom_fields || [],
-        volume_discounts: product.volume_discounts || []
+        volume_discounts: product.volume_discounts || [],
+        payment_methods: product.payment_methods || []
       };
 
-      // Update product with new status
+      // Send update request to the server
       await api.put(`shops/${api.shopId}/products/${productId}/update`, updatePayload);
 
-      // Get emoji for selected color
       const colorEmoji = COLOR_EMOJIS[statusColor] || '⚪';
-
       const embed = new EmbedBuilder()
         .setTitle('Product Status Updated')
         .setDescription(`Status updated for product: ${product.name}`)
@@ -95,13 +75,13 @@ export default {
           { name: 'Status Text', value: statusText, inline: true },
           { name: 'Status Color', value: colorEmoji, inline: true }
         )
-        .setColor(finalStatusColor || '#6571ff')
+        .setColor(statusColor === 'null' ? '#6571ff' : statusColor)
         .setTimestamp();
 
       return interaction.reply({ embeds: [embed] });
 
     } catch (error) {
-      console.error('Error details:', error);
+      console.error('Error updating product status:', error);
       return interaction.reply({ 
         content: 'Failed to update product status. Error: ' + error.message,
         ephemeral: true 
