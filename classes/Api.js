@@ -4,6 +4,7 @@ import { config } from '../utils/config.js';
 export class Api {
   constructor() {
     this.baseUrl = 'https://api.sellauth.com/v1/';
+    this.internalBaseUrl = 'https://api-internal.sellauth.com/v1/';
     this.apiKey = config.SA_API_KEY;
     this.shopId = config.SA_SHOP_ID;
   }
