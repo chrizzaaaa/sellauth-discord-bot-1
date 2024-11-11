@@ -43,29 +43,26 @@ export default {
     const statusColor = interaction.options.getString('color');
     
     try {
-      // Get current product data
+      // Get current product data to verify it exists and get the name
       const product = await api.get(`shops/${api.shopId}/products/${productId}`);
 
-      // Create the update payload with all required fields
-      const updatePayload = {
-        ...product,
-        status_text: statusText,
-        status_color: statusColor === 'null' ? null : statusColor,
-        badge_color: product.badge_color || null,
-        badge_text: product.badge_text || null,
-        stock_count: product.stock_count || 0,
-        images: product.images || [],
-        cloudflare_image_id: product.cloudflare_image_id || null,
-        group_sort_priority: product.group_sort_priority || 0,
-        id: parseInt(productId),
-        shop_id: parseInt(api.shopId),
-        custom_fields: product.custom_fields || [],
-        volume_discounts: product.volume_discounts || [],
-        payment_methods: product.payment_methods || []
-      };
+      // Send update request to the internal API
+      const response = await fetch(`${api.internalBaseUrl}shops/${api.shopId}/products/bulk-update/status`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${api.apiKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          product_ids: [productId],
+          status_color: statusColor === 'null' ? null : statusColor,
+          status_text: statusText
+        })
+      });
 
-      // Send update request to the server
-      await api.put(`shops/${api.shopId}/products/${productId}/update`, updatePayload);
+      if (!response.ok) {
+        throw { message: 'Invalid response', response };
+      }
 
       const colorEmoji = COLOR_EMOJIS[statusColor] || '⚪';
       const embed = new EmbedBuilder()
