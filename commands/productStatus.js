@@ -1,4 +1,4 @@
-import { EmbedBuilder, SlashCommandBuilder, ActionRowBuilder, StringSelectMenuBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, ButtonBuilder, ButtonStyle } from 'discord.js';
+import { EmbedBuilder, SlashCommandBuilder, ActionRowBuilder, StringSelectMenuBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 
 // emoji for status colors
 const COLOR_EMOJIS = {
@@ -14,6 +14,10 @@ export default {
   data: new SlashCommandBuilder()
     .setName('product-status')
     .setDescription('Edit a product status.')
+    .addStringOption((option) => 
+      option.setName('product')
+        .setDescription('Name of the product to update')
+        .setRequired(true))
     .addStringOption((option) => 
       option.setName('text')
         .setDescription('The status text')
@@ -34,161 +38,146 @@ export default {
   onlyWhitelisted: true,
 
   async execute(interaction, api) {
-    const expiredEmbed = new EmbedBuilder()
-      .setTitle('Time Expired')
-      .setDescription('Time expired. Please try again.')
-      .setColor('#e74c3c');
-
-    // Search products by name
-    const searchButton = new ButtonBuilder()
-      .setCustomId('show-search-modal')
-      .setLabel('Search Product')
-      .setStyle(ButtonStyle.Primary);
-
-    const row = new ActionRowBuilder()
-      .addComponents(searchButton);
-
-    const message = await interaction.reply({
-      embeds: [
-        new EmbedBuilder()
-          .setTitle('Updating Product Status')
-          .setDescription('Click the button below to search for a product')
-          .setColor('#6571ff')
-      ],
-      components: [row],
-      fetchReply: true
-    });
-
-    const modal = new ModalBuilder()
-      .setCustomId('product-search-modal')
-      .setTitle('Search Product');
-
-    const productNameInput = new TextInputBuilder()
-      .setCustomId('productName')
-      .setLabel('Enter product name to search')
-      .setStyle(TextInputStyle.Short)
-      .setRequired(true);
-
-    const firstActionRow = new ActionRowBuilder().addComponents(productNameInput);
-    modal.addComponents(firstActionRow);
+    await interaction.deferReply();
 
     try {
+      const searchTerm = interaction.options.getString('product').toLowerCase();
+      const productsResponse = await api.get(`shops/${api.shopId}/products`);
+      
+      if (!productsResponse || !productsResponse.data) {
+        throw new Error('Invalid API response');
+      }
+
+      const products = productsResponse.data;
+      const matchedProducts = products.filter(product => 
+        product.name.toLowerCase().includes(searchTerm)
+      );
+
+      if (matchedProducts.length === 0) {
+        return interaction.editReply({
+          embeds: [
+            new EmbedBuilder()
+              .setColor('#e74c3c')
+              .setDescription('No matching products were found.')
+          ]
+        });
+      }
+
+      if (matchedProducts.length === 1) {
+        await this.updateProductStatus(
+          interaction, 
+          api, 
+          matchedProducts[0].id, 
+          interaction.options.getString('text'),
+          interaction.options.getString('color'),
+          matchedProducts[0].name
+        );
+        return;
+      }
+
+      const statusEmbed = new EmbedBuilder()
+        .setDescription('Click the button below to search products')
+        .setColor('#6571ff');
+
+      const searchButton = new ButtonBuilder()
+        .setCustomId('show-products')
+        .setLabel('Search Products')
+        .setStyle(ButtonStyle.Primary);
+
+      const row = new ActionRowBuilder().addComponents(searchButton);
+
+      const message = await interaction.editReply({
+        embeds: [statusEmbed],
+        components: [row]
+      });
+
       const collector = message.createMessageComponentCollector({
-        filter: i => i.customId === 'show-search-modal' && i.user.id === interaction.user.id,
+        filter: i => {
+          if (i.user.id !== interaction.user.id) {
+            i.reply({ content: 'Not for you!', ephemeral: true });
+            return false;
+          }
+          return (i.customId === 'show-products' || i.customId === 'product-select');
+        },
         time: 120000
       });
 
-      collector.on('collect', async (buttonInteraction) => {
-        await buttonInteraction.showModal(modal);
+      let selectionMessage = null;
 
-        try {
-          const modalSubmit = await buttonInteraction.awaitModalSubmit({
-            filter: i => i.customId === 'product-search-modal',
-            time: 120000
-          });
-
-          const searchName = modalSubmit.fields.getTextInputValue('productName');
-          const products = await api.get(`shops/${api.shopId}/products`);
-          
-          const matchedProducts = products.data.filter(product => 
-            product.name.toLowerCase().includes(searchName.toLowerCase())
-          );
-
-          if (matchedProducts.length === 0) {
-            await interaction.editReply({
-              embeds: [
-                new EmbedBuilder()
-                  .setTitle('Product Search Failed')
-                  .setDescription('No products found matching that name.')
-                  .setColor('#e74c3c')
-              ],
-              components: []
-            });
-            await modalSubmit.deferUpdate();
-            return;
-          }
-
-          if (matchedProducts.length === 1) {
-            await this.updateProductStatus(interaction, api, matchedProducts[0].id, interaction.options.getString('text'), interaction.options.getString('color'), matchedProducts[0].name);
-            await modalSubmit.deferUpdate();
-            return;
-          }
-
-          // Update main message to show waiting message
-          await interaction.editReply({
-            embeds: [
-              new EmbedBuilder()
-                .setTitle('Updating Product Status')
-                .setDescription('Waiting for product selection...')
-                .setColor('#6571ff')
-            ],
-            components: []
-          });
-
-          // Show product selection menu in ephemeral message
+      collector.on('collect', async (i) => {
+        if (i.customId === 'show-products') {
           const selectMenu = new StringSelectMenuBuilder()
             .setCustomId('product-select')
             .setPlaceholder('Select a product')
             .addOptions(
               matchedProducts.map(product => ({
-                label: `${product.name} (${product.stock === null ? 'stock not found' : product.stock + ' in stock'})`,
+                label: product.name,
                 value: product.id.toString()
               }))
             );
 
           const menuRow = new ActionRowBuilder().addComponents(selectMenu);
           
-          await modalSubmit.deferUpdate();
-          
-          const selectionMessage = await interaction.followUp({
-            content: 'Multiple products found. Please select one:',
+          selectionMessage = await i.reply({
+            embeds: [new EmbedBuilder()
+              .setDescription('Select a product from the menu:')
+              .setColor('#6571ff')],
             components: [menuRow],
-            ephemeral: true
+            ephemeral: true,
+            fetchReply: true
           });
 
           try {
             const selection = await selectionMessage.awaitMessageComponent({
               filter: i => i.customId === 'product-select' && i.user.id === interaction.user.id,
-              time: 30000
+              time: 120000
             });
 
             const selectedProduct = matchedProducts.find(p => p.id.toString() === selection.values[0]);
-            await this.updateProductStatus(interaction, api, selection.values[0], interaction.options.getString('text'), interaction.options.getString('color'), selectedProduct.name);
             await selection.deferUpdate();
-          } catch (err) {
-            await interaction.editReply({
-              embeds: [expiredEmbed],
-              components: []
-            });
-            return;
+            await this.updateProductStatus(
+              interaction,
+              api,
+              selection.values[0],
+              interaction.options.getString('text'),
+              interaction.options.getString('color'),
+              selectedProduct.name
+            );
+            
+            collector.stop('completed');
+          } catch (error) {
+            if (error.code === 'InteractionCollectorError') {
+              await interaction.editReply({
+                embeds: [
+                  new EmbedBuilder()
+                    .setColor('#e74c3c')
+                    .setDescription('Selection time expired. Please try again.')
+                ],
+                components: []
+              });
+            } else {
+              console.error('Error selecting product:', error);
+            }
           }
-
-        } catch (error) {
-          await interaction.editReply({
-            embeds: [expiredEmbed],
-            components: []
-          });
-          return;
         }
       });
 
-      collector.on('end', () => {
-        interaction.editReply({
-          embeds: [expiredEmbed],
-          components: []
-        });
+      collector.on('end', (collected, reason) => {
+        if (reason !== 'completed' && message.editable) {
+          interaction.editReply({
+            components: []
+          }).catch(() => {});
+        }
       });
 
     } catch (error) {
-      console.error(error);
-      return interaction.editReply({
+      console.error('Error updating product status:', error);
+      await interaction.editReply({
         embeds: [
           new EmbedBuilder()
-            .setTitle('Error')
-            .setDescription('An error occurred while processing your request.')
             .setColor('#e74c3c')
-        ],
-        components: []
+            .setDescription('An error occurred while updating the product status')
+        ]
       });
     }
   },
@@ -204,7 +193,7 @@ export default {
       const colorEmoji = COLOR_EMOJIS[statusColor] || '⚪';
       const embed = new EmbedBuilder()
         .setTitle('Product Status Updated')
-        .setDescription(`Status updated for product: **${productName}** (ID: ${productId})`)
+        .setDescription(`Status updated for product: **${productName}**`)
         .addFields(
           { name: 'Status Text', value: statusText, inline: true },
           { name: 'Status Color', value: colorEmoji, inline: true }
@@ -219,10 +208,13 @@ export default {
 
     } catch (error) {
       console.error('Error updating product status:', error);
-
-      return interaction.editReply({ 
-        content: 'Failed to update product status. Error: ' + error.message,
-        ephemeral: true 
+      await interaction.editReply({ 
+        embeds: [
+          new EmbedBuilder()
+            .setColor('#e74c3c')
+            .setDescription('Failed to update product status')
+        ],
+        components: []
       });
     }
   }
